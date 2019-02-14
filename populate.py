@@ -1,57 +1,42 @@
 #!/usr/bin/env python
+# pylint: disable=missing-docstring
 
 import fnmatch
 import os
+from os.path import abspath, dirname, join
 import re
 import sys
 import textwrap
 from datetime import date
 from string import capwords
 from subprocess import check_call, check_output
-from os.path import abspath, dirname, join
-
-try:
-    from ConfigParser import SafeConfigParser as ConfigParser
-except ImportError:
-    try:
-        from configparser import SafeConfigParser as ConfigParser
-    except ImportError:
-        from configparser import ConfigParser
-        assert ConfigParser  # silence pyflakes
+from configparser import ConfigParser
 
 
-this_dir = dirname(abspath(__file__))
-template_dir = join(this_dir, 'template')
-populate_ini = join(this_dir, 'populate.ini')
-
-
-if sys.version_info < (3, 0):
-    def items(x):
-        return x.iteritems()
-else:
-    def items(x):
-        return x.items()
+THIS_DIR = dirname(abspath(__file__))
+TEMPLATE_DIR = join(THIS_DIR, 'template')
+POPULATE_INI = join(THIS_DIR, 'populate.ini')
 
 
 def find_templated_files():
-    for root, _, filenames in os.walk(template_dir):  # pylint: disable=W0612
-        for f in fnmatch.filter(filenames, '*.template'):
-            yield join(root, f)
+    for root, _, filenames in os.walk(TEMPLATE_DIR):
+        for filename in fnmatch.filter(filenames, '*.template'):
+            yield join(root, filename)
 
 
 def find_templated_directories():
-    for root, dirnames, _ in os.walk(template_dir):  # pylint: disable=W0612
-        for d in fnmatch.filter(dirnames, '{{ * }}'):
-            yield join(root, d)
+    for root, dirnames, _ in os.walk(TEMPLATE_DIR):
+        for subdir in fnmatch.filter(dirnames, '{{ * }}'):
+            yield join(root, subdir)
 
 
 def git(*args):
-    return check_output(('git',) + tuple(args)).strip()
+    return check_output(('git',) + tuple(args), encoding='utf-8').strip()
 
 
 def read_requirements(requirements_file_basename):
-    with open(join(template_dir, requirements_file_basename)) as f:
-        content = f.read()
+    with open(join(TEMPLATE_DIR, requirements_file_basename)) as fobj:
+        content = fobj.read()
 
     for line in content.splitlines():
         line = re.sub('#.*', '', line).strip()
@@ -77,7 +62,7 @@ def get_copyright_years():
 
 def get_github_info():
     result = re.search(
-        'github.com[:/](?P<user>[^/]+)/(?P<repo>.+)[.]git',
+        'github.com[:/](?P<user>[^/]+)/(?P<repo>.+)(?:[.]git)?$',
         git('config', '--get', 'remote.origin.url'))
 
     if not result:
@@ -98,13 +83,14 @@ def get_tests_require():
 
 def get_populate_ini_settings():
     config = ConfigParser()
-    config.readfp(open(populate_ini))
+    with open(POPULATE_INI) as fobj:
+        config.read_file(fobj)
     values = dict(
         package_name=config.get('global', 'package_name'),
         package_version=config.get('global', 'package_version'),
         short_description=config.get('global', 'short_description'))
 
-    empty_values = [k for k, v in items(values) if not v]
+    empty_values = [key for key in values if not key]
 
     if empty_values:
         raise RuntimeError(
@@ -132,10 +118,10 @@ def get_template_values():
     # pretty common for package names.
     values['package_dir_name'] = values['package_name'].replace('-', '_')
 
-    print('Using the following template values:\n    {values}'.format(
-        values='\n    '.join(
-            '{k}: {v!r}'.format(k=k, v=v)
-            for k, v in items(values))))
+    print('Using the following template values:\n{values}'.format(
+        values='\n'.join(
+            '    {key}: {value!r}'.format(key=key, value=value)
+            for key, value in values.items())))
 
     return values
 
@@ -177,7 +163,7 @@ def replace_pytuples(text, key, value):
             indent + repr(v) + ',' for v in value))
 
     # squash empty tuples
-    text = re.sub('[(]\s+[)]', '()', text)
+    text = re.sub(r'[(]\s+[)]', '()', text)
 
     return text
 
@@ -192,42 +178,45 @@ def replace_capitalize(text, key, value):
 
 
 def do_replacements(text, key, value, fns):
-    for fn in fns:
-        text = fn(text=text, key=key, value=value)
+    for func in fns:
+        text = func(text=text, key=key, value=value)
     return text
 
 
 def populate_files(template_values):
     for template_path in find_templated_files():
-        with open(template_path) as f:
-            content = f.read()
+        with open(template_path) as fobj:
+            content = fobj.read()
 
-        for k, v in items(template_values):
-            if isinstance(v, basestring):
-                fns = replace_raw, replace_capitalize, replace_pystrings
+        for key, value in template_values.items():
+            if isinstance(value, str):
+                fns = (replace_raw, replace_capitalize, replace_pystrings)
             else:
-                fns = replace_pytuples,
+                fns = (replace_pytuples,)
 
-            content = do_replacements(text=content, key=k, value=v, fns=fns)
+            content = do_replacements(
+                text=content, key=key, value=value, fns=fns)
 
-        with open(template_path, 'wb') as f:
-            f.write(content)
+        with open(template_path, 'w') as fobj:
+            fobj.write(content)
 
         populated_path = re.sub('[.]template$', '', template_path)
         git('mv', '-f', template_path, populated_path)
 
 
 def populate_directories(template_values):
-    for template_dir in find_templated_directories():
+    for template_subdir in find_templated_directories():
 
-        for k, v in items(template_values):
-            if not isinstance(v, basestring):
+        for key, value in template_values.items():
+            if not isinstance(value, str):
                 continue
 
-            renamed_dir = template_dir.replace('{{{{ {k} }}}}'.format(k=k), v)
+            renamed_dir = template_subdir.replace(
+                '{{{{ {key} }}}}'.format(key=key),
+                value)
 
-            if renamed_dir != template_dir:
-                git('mv', template_dir, renamed_dir)
+            if renamed_dir != template_subdir:
+                git('mv', template_subdir, renamed_dir)
 
 
 def main():
@@ -237,21 +226,21 @@ def main():
         populate_directories(template_values)
 
         # No longer need the template setup files!
-        git('rm', '-f', populate_ini)
-        git('rm', abspath(__file__))
+        git('rm', '-f', POPULATE_INI)
+        git('rm', '-f', abspath(__file__))
 
         # Move everything in template/ to the root of the project.
-        for filename in os.listdir(template_dir):
-            git('mv', '-f', join(template_dir, filename), this_dir)
+        for filename in os.listdir(TEMPLATE_DIR):
+            git('mv', '-f', join(TEMPLATE_DIR, filename), THIS_DIR)
 
         # The template dir is unneeded now and should be empty.
-        check_call(('rmdir', template_dir))
+        check_call(('rmdir', TEMPLATE_DIR))
 
         # Stage the rest of the updated files.
         git('add', '-u')
 
-    except RuntimeError as e:
-        print('[ERROR] {e}'.format(e=e))
+    except RuntimeError as exc:
+        print('[ERROR] {exc}'.format(exc=exc))
         sys.exit(1)
 
 

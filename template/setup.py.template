@@ -17,8 +17,8 @@ SETUP_KWARGS = dict(
         {{ tests_require|pytuple }}),
     description=(
         {{ short_description|pystring }}),
-    classifiers=(
-        # https://github.com/HoverHell/python-pypi-template
+    classifiers=[
+        # https://pypi.org/classifiers/
         'License :: OSI Approved :: MIT License',
         'Development Status :: 2 - Pre-Alpha',
         # 'Development Status :: 3 - Alpha',
@@ -30,7 +30,8 @@ SETUP_KWARGS = dict(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: Implementation :: CPython',
-        'Programming Language :: Python :: Implementation :: PyPy'))
+        'Programming Language :: Python :: Implementation :: PyPy',
+    ])
 
 
 if __name__ == '__main__':
